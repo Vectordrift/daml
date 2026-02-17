@@ -12,6 +12,9 @@ on:
       - 'sdk/daml-lf/**'
       - 'sdk/compiler/**'
 
+permissions:
+  contents: write  # Needed for creating releases
+
 # Cancel in-progress runs for the same branch
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}

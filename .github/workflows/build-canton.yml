@@ -1,0 +1,124 @@
+# Build Canton community_app with external call support
+# Triggered manually or on push to feature/external-call
+name: Build Canton
+
+on:
+  workflow_dispatch:  # Manual trigger
+  push:
+    branches:
+      - feature/external-call
+    paths:
+      - 'sdk/canton/**'
+      - 'sdk/daml-lf/**'
+      - 'sdk/compiler/**'
+
+# Cancel in-progress runs for the same branch
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-canton:
+    name: Build Canton + damlc
+    runs-on: ubuntu-22.04
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v27
+        with:
+          nix_path: nixpkgs=channel:nixos-23.11
+
+      - name: Cache Nix store
+        uses: actions/cache@v4
+        with:
+          path: /nix/store
+          key: nix-${{ runner.os }}-${{ hashFiles('sdk/dev-env/**') }}
+          restore-keys: |
+            nix-${{ runner.os }}-
+
+      - name: Cache Bazel
+        uses: actions/cache@v4
+        with:
+          path: |
+            sdk/.bazel-cache
+            ~/.cache/bazelisk
+            ~/.cache/bazel
+          key: bazel-${{ runner.os }}-${{ hashFiles('sdk/.bazelrc', 'sdk/.bazeliskrc', 'sdk/WORKSPACE', 'sdk/canton/BUILD.bazel') }}
+          restore-keys: |
+            bazel-${{ runner.os }}-
+
+      - name: Build Canton community_app
+        run: |
+          cd sdk
+          eval "$(./dev-env/bin/dade-assist)"
+          bazel build //canton:community_app_deploy.jar
+        env:
+          BAZEL_REMOTE_CACHE: ""  # Disable DA's remote cache
+
+      - name: Build damlc
+        run: |
+          cd sdk
+          eval "$(./dev-env/bin/dade-assist)"
+          bazel build //compiler/damlc:damlc-dist
+        env:
+          BAZEL_REMOTE_CACHE: ""
+
+      - name: Package artifacts
+        run: |
+          mkdir -p artifacts
+
+          # Canton deploy jar (fat jar, self-contained)
+          cp sdk/bazel-bin/canton/community_app_deploy.jar artifacts/canton-community.jar
+
+          # damlc distribution
+          if [ -d sdk/bazel-bin/compiler/damlc/damlc-dist ]; then
+            tar -czf artifacts/damlc-linux-x86_64.tar.gz -C sdk/bazel-bin/compiler/damlc damlc-dist
+          fi
+
+          # Version info
+          echo "canton_version=$(cat sdk/canton/VERSION)" >> artifacts/build-info.txt
+          echo "git_sha=${{ github.sha }}" >> artifacts/build-info.txt
+          echo "build_date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> artifacts/build-info.txt
+
+          ls -lh artifacts/
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: canton-external-call-${{ github.sha }}
+          path: artifacts/
+          retention-days: 30
+
+      - name: Create Release (on manual trigger)
+        if: github.event_name == 'workflow_dispatch'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: canton-external-call-${{ github.run_number }}
+          name: Canton with External Call (build ${{ github.run_number }})
+          body: |
+            Canton community app with external call support.
+            Built from `feature/external-call` branch at ${{ github.sha }}.
+
+            ## Artifacts
+            - `canton-community.jar` — Fat JAR, run with `java -jar canton-community.jar`
+            - `damlc-linux-x86_64.tar.gz` — DAML compiler for Linux
+
+            ## Usage
+            ```bash
+            # Run Canton
+            java -jar canton-community.jar run -c canton.conf script.canton
+
+            # Compile DAML
+            tar xzf damlc-linux-x86_64.tar.gz
+            ./damlc-dist/damlc build
+            ```
+          files: |
+            artifacts/canton-community.jar
+            artifacts/damlc-linux-x86_64.tar.gz
+            artifacts/build-info.txt
+          draft: false
+          prerelease: true

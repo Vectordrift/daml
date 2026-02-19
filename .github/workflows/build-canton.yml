@@ -77,9 +77,14 @@ jobs:
           # Canton deploy jar (fat jar, self-contained)
           cp sdk/bazel-bin/canton/community_app_deploy.jar artifacts/canton-community.jar
 
-          # damlc distribution
-          if [ -d sdk/bazel-bin/compiler/damlc/damlc-dist ]; then
+          # damlc distribution (handle both tar.gz and directory outputs from Bazel)
+          if [ -f sdk/bazel-bin/compiler/damlc/damlc-dist.tar.gz ]; then
+            cp sdk/bazel-bin/compiler/damlc/damlc-dist.tar.gz artifacts/damlc-linux-x86_64.tar.gz
+          elif [ -d sdk/bazel-bin/compiler/damlc/damlc-dist ]; then
             tar -czf artifacts/damlc-linux-x86_64.tar.gz -C sdk/bazel-bin/compiler/damlc damlc-dist
+          else
+            echo 'WARNING: damlc-dist not found as .tar.gz or directory'
+            ls -la sdk/bazel-bin/compiler/damlc/ || true
           fi
 
           # Version info
